@@ -1,0 +1,4 @@
+# Obsidian keeps per-machine UI state and plugin settings (which can hold credentials) here
+.obsidian/
+.trash/
+.DS_Store
