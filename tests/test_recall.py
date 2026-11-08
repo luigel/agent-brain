@@ -1,12 +1,12 @@
 """Recall: `brain query` ranks whole notes (title + body) across the project and Global/,
 and `brain context` never loses the preferences to a long hub."""
 import re
-import shutil
 import unittest
 
 from helpers import BrainTestCase
 
-DNS = "Projects/Shop/Gotchas/Docker DNS fails under memory pressure.md"
+HUB = "Projects/Shop/Shop.md"
+DNS ="Projects/Shop/Gotchas/Docker DNS fails under memory pressure.md"
 WORKTREE_TESTS = "Projects/Shop/Patterns/Run tests in a worktree.md"
 CONTAINER = "Projects/Shop/References/Container settings.md"
 NO_WORKTREES = "Global/Preferences/No worktrees unless asked.md"
@@ -22,7 +22,7 @@ def ranked(out):
     return re.findall(r"^\d+\. (.+?\.md)", out, re.M)
 
 
-def linked(out):
+def outside(out):
     return re.findall(r"^- (.+?\.md)", out, re.M)
 
 
@@ -79,11 +79,21 @@ class RecallTest(BrainTestCase):
         out = self.brain("query", "worktree", "40", "--project", "Shop")
         self.assertEqual(len(ranked(out)), 1)
 
-    @unittest.skipUnless(shutil.which("graphify"), "graphify not on PATH")
-    def test_query_lists_linked_notes_but_not_hubs(self):
-        out = self.brain("query", "getaddrinfo", "--project", "Shop")
-        self.assertIn(CONTAINER, linked(out))
-        self.assertNotIn("Projects/Shop/Shop.md", linked(out))
+    def test_query_leaves_out_the_hub_already_in_context(self):
+        self.assertNotIn(HUB, ranked(self.brain("query", "online shop", cwd=self.repo)))
+        self.assertIn(HUB, ranked(self.brain("query", "online shop", "--project", "Shop", cwd=self.home)))
+
+    def test_query_points_at_a_better_note_outside_the_project(self):
+        out = self.brain("query", "getaddrinfo note", cwd=self.repo)
+        self.assertEqual(ranked(out)[0], DNS)
+        self.assertEqual(outside(out), [OTHER_DNS])
+        self.assertEqual(outside(self.brain("query", "getaddrinfo for mysql failed", cwd=self.repo)), [])
+
+    def test_weak_match_is_flagged(self):
+        out = self.brain("query", "worktree zebra giraffe llama", cwd=self.repo)
+        self.assertIn("Weak matches", out)
+        self.assertIn("(matched 1/4: worktree)", out)
+        self.assertNotIn("Weak matches", self.brain("query", "git worktree", cwd=self.repo))
 
 
 class ContextTest(BrainTestCase):

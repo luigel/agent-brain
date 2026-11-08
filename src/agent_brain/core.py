@@ -1,9 +1,9 @@
 """`brain`: CLI for the Agent's Brain vault (~/brain), shared by all of the user's coding agents.
 
   brain query "<question>" [N] [--all | --project NAME]
-                                              full-text ranked notes plus the notes linked to them, N-token
-                                              budget (default 1500); scoped to the current folder's project
-                                              and Global/ unless --all/--project is given
+                                              notes ranked by full-text match, N-token budget (default
+                                              1500); scoped to the current folder's project and Global/
+                                              unless --all/--project is given
   brain find <words...>                       notes anywhere in the vault containing all the words
   brain project [dir]                         print the project hub path for a folder (exit 1 if none)
   brain init-project "<Name>" <repo-dir>...   create Projects/<Name>/ with a hub note mapped to those folders
@@ -201,8 +201,10 @@ def rebuild(if_stale=False):
 
 # ── recall ────────────────────────────────────────────────────────────────────
 # graphify only indexes filenames, headings and links, so a question phrased as a symptom ("getaddrinfo
-# failed") never reaches the note body that answers it. Recall ranks whole notes with BM25 instead, and
-# uses the graph for what it is good at: the notes linked to the best matches.
+# failed") never reaches the note body that answers it. Recall ranks whole notes with BM25 instead.
+# Measured on 2026-11-09 against 85 labelled tasks: stemming, passage scoring, link-text boosts and graph
+# neighbours did not improve the ranking, and listing linked notes was ~97% noise, so recall doesn't use
+# the graph.
 
 WORD = re.compile(r"\w[\w.-]*\w|\w")
 STOPWORDS = frozenset(
@@ -210,7 +212,7 @@ STOPWORDS = frozenset(
     "not of on or our should so than that the their then there these this to was we were what when where "
     "which who why will with would you your".split())
 TOP_RESULTS = 5
-TOP_LINKED = 5
+WEAK = 0.4  # best note matched fewer than this share of the question's words: probably unrelated
 
 
 def terms(text):
@@ -249,33 +251,30 @@ def rank(paths, question, k1=1.2, b=0.75):
     return [(p, matched, meta, body) for _, _, p, matched, meta, body in scored]
 
 
-def linked_notes(rels):
-    """Vault-relative paths of notes linked to or from `rels` (best match first), per the whole-vault graph.
-    Hubs and Home.md link to everything, so they're left out."""
-    try:
-        graph = json.loads((OUT_ROOT / "all" / "graph.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    page = {n.get("id"): n.get("source_file") for n in graph.get("nodes", []) if n.get("node_kind") == "page"}
-    neighbours = {}
-    for link in graph.get("links") or graph.get("edges") or []:
-        a, b = page.get(link.get("source")), page.get(link.get("target"))
-        if link.get("relation") == "references" and a and b:
-            neighbours.setdefault(a, []).append(b)
-            neighbours.setdefault(b, []).append(a)
-    skip = set(rels) | {"Home.md"} | {str(h.relative_to(root())) for _, _, h in projects()}
-    found = []
-    for rel in rels:
-        for other in neighbours.get(rel, []):
-            if other not in skip and other not in found and (root() / other).is_file():
-                found.append(other)
-    return found[:TOP_LINKED]
+def query_words(question):
+    """The question's distinct words that count for matching, each mapped to its terms."""
+    words = {}
+    for w in WORD.findall(question.lower()):
+        ts = set(terms(w))
+        if ts and w not in words:
+            words[w] = ts
+    return words
+
+
+def describe(p, matched, meta, body, words, prefix):
+    m = set(matched)
+    # a compound such as `bw-widgets` can match on a part alone; show that part, not the whole word
+    hit = [w if w in m else "+".join(sorted(ts & m)) for w, ts in words.items() if ts & m]
+    status = meta.get("status", "active")
+    flag = f" [{status}]" if status != "active" else ""
+    indent = " " * len(prefix)
+    return (f"{prefix}{p.relative_to(root())}{flag}  (matched {len(hit)}/{len(words)}: {', '.join(hit)})\n"
+            f"{indent}{summary_line(body)}")
 
 
 def query(args):
     question = args[0]
     budget = int(next((a for a in args[1:] if a.isdigit()), "1500"))
-    rebuild(if_stale=True)  # keeps the graph behind linked_notes fresh
     if "--all" in args:
         proj = None
     elif "--project" in args:
@@ -293,22 +292,35 @@ def query(args):
     else:
         bases = [root()]
         print("Scope: whole vault. Paths are relative to ~/brain/")
-    paths = [p for base in bases if base.is_dir() for p, _ in notes(base)]
+    # Home.md only lists other notes, and the hub of the folder's own project is already in the
+    # session-start context, so neither should take one of the few result slots.
+    home, here = root() / "Home.md", project_for(os.getcwd())
+    skip = {home} | ({here[2]} if here else set())
+    paths = [p for base in bases if base.is_dir() for p, _ in notes(base) if p not in skip]
     results = rank(paths, question)[:TOP_RESULTS]
-    if not results:
+    # A project-scoped search can't see a note filed under another project. Rank the whole vault too
+    # (hubs left out: they match nearly everything) and point at its best note if it lies outside.
+    outside = None
+    if proj:
+        hubs = {h for _, _, h in projects()}
+        best = rank([p for p, _ in notes() if p != home and p not in hubs], question)[:1]
+        if best and not any(base in best[0][0].parents for base in bases):
+            outside = best[0]
+    if not results and not outside:
         print("No matching notes. Try other words, `--all`, or `brain find <word>`.")
         return 0
 
-    entries = []
-    for n, (p, matched, meta, body) in enumerate(results, 1):
-        status = meta.get("status", "active")
-        flag = f" [{status}]" if status != "active" else ""
-        entries.append(f"{n}. {p.relative_to(root())}{flag}  (matched: {', '.join(matched)})\n"
-                       f"   {summary_line(body)}")
-    linked = linked_notes([str(p.relative_to(root())) for p, *_ in results])
-    if linked:
-        entries.append("Linked from these:")
-        entries += [f"- {rel} — {summary_line(frontmatter(read(root() / rel))[1])}" for rel in linked]
+    words = query_words(question)
+    if results:
+        hit = sum(1 for ts in words.values() if ts & set(results[0][1]))
+        if hit / len(words) < WEAK:
+            print(f"Weak matches: the best note matched only {hit} of your {len(words)} words, so these "
+                  "may be unrelated. Try other words (error text, component or tool names), then `--all` "
+                  "or `brain find <word>`.")
+    entries = [describe(*r, words, f"{n}. ") for n, r in enumerate(results, 1)]
+    if outside:
+        entries.append("The best match in the whole vault is outside this scope:\n"
+                       + describe(*outside, words, "- "))
 
     used, room = 0, budget * 3  # ~3 characters per token
     for i, entry in enumerate(entries):

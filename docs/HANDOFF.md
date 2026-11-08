@@ -59,14 +59,14 @@ brain rebuild                                 # rebuild all graphs; structural, 
 brain context [dir] [--json]                  # session-start text for a folder: hub + project prefs + global prefs
 ```
 
-- `query` prints a scope line, then up to 5 notes ranked by full-text match (title and body), each with the words it matched and its first line, then the notes linked to them (from the whole-vault graph). Paths are relative to `~/brain/`. The optional budget (default 1500 tokens) cuts whole results.
+- `query` prints a scope line, then up to 5 notes ranked by full-text match (title and body), each with how many of the question's words it matched and its first line. It warns ("Weak matches") when the best note matched under 40% of the words, and names the best note in the whole vault when that one is outside the scope. The current folder's project hub is left out, since session start already injected it. Paths are relative to `~/brain/`. The optional budget (default 1500 tokens) cuts whole results.
 - `context` reads `{"cwd": ...}` from stdin when a hook pipes it, or takes a folder argument. `--json` wraps the output as `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"..."}}`.
 
 ### Facts already established (don't re-investigate)
 
 - **No LLM needed.** graphify parses Markdown headings and `[[wikilinks]]` structurally: no API key, no token cost, under a second. `brain` sets `GRAPHIFY_OUT` so output never lands inside the vault.
 - **Blocked filenames.** graphify silently skips files whose names contain *secret, password, token, credential* or *service account*. Note filenames must avoid those words; `init-project` refuses such names.
-- **Graph links stay inside the project.** A project graph only sees links between notes in that project. Links to `Global/` notes still work in Obsidian and in the whole-vault graph, which is the one `brain query` uses to list linked notes.
+- **Graph links stay inside the project.** A project graph only sees links between notes in that project. Links to `Global/` notes still work in Obsidian and in the whole-vault graph. `brain query` doesn't use the graphs; it ranks the notes' text.
 - **Sync.** The vault is a git repo. If it has a remote (the user's own private repo), sessions pull at start, and `brain rebuild` and the Stop hook commit and push in the background; `brain sync` does it on demand. Notes are stored unencrypted on the remote, so never store a key, password or token *value* in a note; describe where it lives instead.
 
 ## Setup steps
@@ -120,7 +120,7 @@ Every agent needs this, with or without skills or hooks. Append the block below 
 
 - `~/brain` is your long-term memory, shared with the user's other coding agents. It replaces any built-in memory. Note rules: `~/brain/_meta/Conventions.md`. Tool: the `brain` command.
 - The brain is per project. `brain project` maps the current folder to `~/brain/Projects/<Name>/`. Knowledge true in any repo lives in `~/brain/Global/`.
-- **Recall** before non-trivial work. If session-start context wasn't injected, run `brain context` in the repo folder first. Then run `brain query "<topic>"` from the repo folder; it searches this project and `Global/`, titles and bodies. Open the few relevant notes. Use `--all` only for cross-project questions or when nothing relevant comes back. Notes are true *when written*: check names, flags and commands against the code before relying on them.
+- **Recall** before non-trivial work. If session-start context wasn't injected, run `brain context` in the repo folder first. Then run `brain query "<topic>"` from the repo folder with 3 to 8 concrete words (exact error text, component, command or tool names); it searches this project and `Global/`, titles and bodies. Open the few relevant notes. If it says "Weak matches" or nothing fits, query once more with different words; use `--all` for cross-project questions or when that also finds nothing. Notes are true *when written*: check names, flags and commands against the code before relying on them.
 - **Record automatically** whenever something durable comes up. That means a correction or preference from the user, a decision and its reason, a gotcha that cost time, a reusable recipe, an external reference, or a project fact that isn't in the repo. Don't record code structure, git history, task state, or any key, password or token value.
 - **How to record:**
   1. `brain find <words>`; update an existing note rather than duplicating it. If another agent wrote it, adjust the relevant lines only.
