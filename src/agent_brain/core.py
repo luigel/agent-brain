@@ -266,7 +266,7 @@ def init_project(name, dirs):
 # ── git sync ──────────────────────────────────────────────────────────────────
 # The vault is a git repo: pull at session start, commit + push after writes. Failures (offline,
 # conflicts, a concurrent sync holding the index lock) never block an agent; they are logged and
-# retried on the next sync.
+# retried on the next sync, and the log is cleared once a sync succeeds.
 
 SYNC_LOG = Path.home() / ".cache" / "agent-brain" / "sync.log"
 
@@ -371,6 +371,8 @@ def sync(quiet=False):
     warnings = [w for w in (pull(),) if w]
     if not warnings:
         warnings += [w for w in (push(),) if w]
+    if not warnings:
+        SYNC_LOG.unlink(missing_ok=True)  # synced cleanly, so any logged problem is fixed
     if quiet:
         if warnings:
             SYNC_LOG.parent.mkdir(parents=True, exist_ok=True)

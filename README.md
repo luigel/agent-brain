@@ -56,7 +56,7 @@ The vault works locally. To keep it on more than one machine:
 After that it syncs on its own:
 - **Session start:** the `SessionStart` hook pulls, with an 8-second timeout. If you're offline, the session uses the local notes and says so.
 - **After writes:** `brain rebuild` and the end-of-reply hook commit and push in the background. Agents never wait on the network.
-- **On demand:** `brain sync` commits, pulls and pushes. Background problems go to `~/.cache/agent-brain/sync.log`, and `brain doctor` reports them.
+- **On demand:** `brain sync` commits, pulls and pushes. Background problems go to `~/.cache/agent-brain/sync.log`, and `brain doctor` reports them until a sync succeeds.
 - **Not in git:** `.obsidian/` (per-machine settings and plugin configs).
 
 Notes are stored **unencrypted** in that repo. Never put a key, password or token *value* in a note; describe where it lives instead.

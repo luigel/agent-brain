@@ -162,6 +162,19 @@ class SyncRepoTest(BrainTestCase):
         self.assertNotIn("failed", self.brain("sync"))
         self.assertIn("Home.md", self.files(remote))
 
+    def test_sync_log_clears_after_success(self):  # doctor kept showing a problem that was long fixed
+        remote = self.bare_remote()
+        self.brain("setup", "--vault-repo", str(remote), "--no-universal")
+        hook = remote / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        (self.vault / "Global" / "Mine.md").write_text("# Mine\n")
+        self.run_brain("sync", "--quiet")
+        self.assertIn("last background sync problem", self.run_brain("doctor").stdout)
+        hook.unlink()
+        self.brain("sync", "--quiet")
+        self.assertNotIn("last background sync problem", self.run_brain("doctor").stdout)
+
     def test_doctor_accepts_local_only(self):
         self.brain("setup", "--no-universal")
         out = self.run_brain("doctor").stdout
