@@ -1,8 +1,9 @@
 """`brain`: CLI for the Agent's Brain vault (~/brain), shared by all of the user's coding agents.
 
   brain query "<question>" [N] [--all | --project NAME]
-                                              graph traversal, N-token budget (default 1500); scoped to the
-                                              project for the current folder unless --all/--project is given
+                                              full-text ranked notes plus the notes linked to them, N-token
+                                              budget (default 1500); scoped to the current folder's project
+                                              and Global/ unless --all/--project is given
   brain find <words...>                       notes anywhere in the vault containing all the words
   brain project [dir]                         print the project hub path for a folder (exit 1 if none)
   brain init-project "<Name>" <repo-dir>...   create Projects/<Name>/ with a hub note mapped to those folders
@@ -27,16 +28,19 @@
 """
 import datetime
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 VAULT = Path.home() / "brain"
 OUT_ROOT = Path.home() / ".graphify" / "brain"
 MAX_CONTEXT = 8000  # SessionStart output is capped at 10k chars
+HUB_CUT = "\n… (hub truncated; open the hub note for the rest)"
 TYPE_DIRS = ("Decisions", "Gotchas", "Patterns", "Preferences", "References")
 # graphify drops files with these words in the name as possible key dumps
 BANNED_NAME = re.compile(r"secret|password|passwd|token|credential|service.?account", re.I)
@@ -195,10 +199,83 @@ def rebuild(if_stale=False):
     return ok
 
 
+# ── recall ────────────────────────────────────────────────────────────────────
+# graphify only indexes filenames, headings and links, so a question phrased as a symptom ("getaddrinfo
+# failed") never reaches the note body that answers it. Recall ranks whole notes with BM25 instead, and
+# uses the graph for what it is good at: the notes linked to the best matches.
+
+WORD = re.compile(r"\w[\w.-]*\w|\w")
+STOPWORDS = frozenset(
+    "a an and are as at be by can could did do does for from had has have how i if in is it its me my no "
+    "not of on or our should so than that the their then there these this to was we were what when where "
+    "which who why will with would you your".split())
+TOP_RESULTS = 5
+TOP_LINKED = 5
+
+
+def terms(text):
+    """Lower-cased words, plus the parts of compounds such as `bw-api` or `phpunit.xml.dist`."""
+    out = []
+    for word in WORD.findall(text.lower()):
+        out.append(word)
+        parts = [p for p in re.split(r"[._-]", word) if p]
+        if len(parts) > 1:
+            out += parts
+    return [t for t in out if t not in STOPWORDS]
+
+
+def rank(paths, question, k1=1.2, b=0.75):
+    """BM25 over title (counted three times) + body. Returns (path, matched terms, frontmatter, body)."""
+    docs = []
+    for p in paths:
+        meta, body = frontmatter(read(p))
+        docs.append((p, meta, body, Counter(terms(p.stem) * 3 + terms(body))))
+    if not docs:
+        return []
+    avg = sum(sum(tf.values()) for *_, tf in docs) / len(docs) or 1
+    wanted = list(dict.fromkeys(terms(question)))
+    df = {t: sum(1 for *_, tf in docs if tf[t]) for t in wanted}
+    scored = []
+    for p, meta, body, tf in docs:
+        size, score, matched = sum(tf.values()), 0.0, []
+        for t in wanted:
+            if tf[t]:
+                idf = math.log(1 + (len(docs) - df[t] + 0.5) / (df[t] + 0.5))
+                score += idf * tf[t] * (k1 + 1) / (tf[t] + k1 * (1 - b + b * size / avg))
+                matched.append(t)
+        if score > 0:
+            scored.append((score, str(p), p, matched, meta, body))
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    return [(p, matched, meta, body) for _, _, p, matched, meta, body in scored]
+
+
+def linked_notes(rels):
+    """Vault-relative paths of notes linked to or from `rels` (best match first), per the whole-vault graph.
+    Hubs and Home.md link to everything, so they're left out."""
+    try:
+        graph = json.loads((OUT_ROOT / "all" / "graph.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    page = {n.get("id"): n.get("source_file") for n in graph.get("nodes", []) if n.get("node_kind") == "page"}
+    neighbours = {}
+    for link in graph.get("links") or graph.get("edges") or []:
+        a, b = page.get(link.get("source")), page.get(link.get("target"))
+        if link.get("relation") == "references" and a and b:
+            neighbours.setdefault(a, []).append(b)
+            neighbours.setdefault(b, []).append(a)
+    skip = set(rels) | {"Home.md"} | {str(h.relative_to(root())) for _, _, h in projects()}
+    found = []
+    for rel in rels:
+        for other in neighbours.get(rel, []):
+            if other not in skip and other not in found and (root() / other).is_file():
+                found.append(other)
+    return found[:TOP_LINKED]
+
+
 def query(args):
     question = args[0]
-    budget = next((a for a in args[1:] if a.isdigit()), "1500")
-    rebuild(if_stale=True)
+    budget = int(next((a for a in args[1:] if a.isdigit()), "1500"))
+    rebuild(if_stale=True)  # keeps the graph behind linked_notes fresh
     if "--all" in args:
         proj = None
     elif "--project" in args:
@@ -210,15 +287,36 @@ def query(args):
     else:
         proj = project_for(os.getcwd())
     if proj:
-        graph = OUT_ROOT / "projects" / slug(proj[0]) / "graph.json"
-        print(f"Scope: project {proj[0]} (pass --all to search the whole vault). "
-              f"src= paths are relative to ~/brain/Projects/{proj[0]}/")
+        bases = [proj[1], root() / "Global"]
+        print(f"Scope: project {proj[0]} + Global/ (pass --all to search the whole vault). "
+              "Paths are relative to ~/brain/")
     else:
-        graph = OUT_ROOT / "all" / "graph.json"
-        print("Scope: whole vault. src= paths are relative to ~/brain/")
-    r = subprocess.run([graphify_bin(), "query", question, "--graph", str(graph), "--budget", budget],
-                       capture_output=True, text=True)
-    print(r.stdout or r.stderr)
+        bases = [root()]
+        print("Scope: whole vault. Paths are relative to ~/brain/")
+    paths = [p for base in bases if base.is_dir() for p, _ in notes(base)]
+    results = rank(paths, question)[:TOP_RESULTS]
+    if not results:
+        print("No matching notes. Try other words, `--all`, or `brain find <word>`.")
+        return 0
+
+    entries = []
+    for n, (p, matched, meta, body) in enumerate(results, 1):
+        status = meta.get("status", "active")
+        flag = f" [{status}]" if status != "active" else ""
+        entries.append(f"{n}. {p.relative_to(root())}{flag}  (matched: {', '.join(matched)})\n"
+                       f"   {summary_line(body)}")
+    linked = linked_notes([str(p.relative_to(root())) for p, *_ in results])
+    if linked:
+        entries.append("Linked from these:")
+        entries += [f"- {rel} — {summary_line(frontmatter(read(root() / rel))[1])}" for rel in linked]
+
+    used, room = 0, budget * 3  # ~3 characters per token
+    for i, entry in enumerate(entries):
+        if i and used + len(entry) > room:
+            print("… (more results; raise the budget, e.g. `brain query \"…\" 3000`)")
+            break
+        print(entry)
+        used += len(entry) + 1
     return 0
 
 
@@ -437,24 +535,29 @@ def context(args):
         out.append(f"\nVault sync: {pulled}.")
 
     proj = project_for(cwd)
+    hub_text, prefs = "", []
     if proj:
         name, folder, hub = proj
         _, body = frontmatter(read(hub))
-        out.append(f"\n## Project: {name} (hub ~/brain/{hub.relative_to(root())})\n{body.strip()}")
-        prefs = preference_lines(folder / "Preferences")
-        if prefs:
-            out.append(f"\n## {name} preferences\n" + "\n".join(prefs))
+        hub_text = f"\n## Project: {name} (hub ~/brain/{hub.relative_to(root())})\n{body.strip()}"
+        lines = preference_lines(folder / "Preferences")
+        if lines:
+            prefs.append(f"\n## {name} preferences\n" + "\n".join(lines))
     else:
         out.append(f"\nNo project area matches {cwd}. If this is a real project, create one with "
                    "`brain init-project \"<Name>\" <repo-dir>` once something worth keeping comes up.")
 
-    prefs = preference_lines(root() / "Global" / "Preferences")
-    if prefs:
-        out.append("\n## Global preferences\n" + "\n".join(prefs))
+    lines = preference_lines(root() / "Global" / "Preferences")
+    if lines:
+        prefs.append("\n## Global preferences\n" + "\n".join(lines))
 
-    text = "\n".join(out)
-    if len(text) > MAX_CONTEXT:
-        text = text[:MAX_CONTEXT] + "\n… (truncated; open the hub note for the rest)"
+    # A long hub gives way first: preferences are rules the agent must follow, the hub is one read away.
+    room = MAX_CONTEXT - len("\n".join(out + prefs)) - 1
+    if len(hub_text) > room:
+        hub_text = hub_text[:max(room - len(HUB_CUT), 0)] + HUB_CUT
+    text = "\n".join(out + ([hub_text] if hub_text else []) + prefs)
+    if len(text) > MAX_CONTEXT:  # only when the preferences alone overflow
+        text = text[:MAX_CONTEXT] + "\n… (truncated)"
     if "--json" in args:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "SessionStart", "additionalContext": text}}))

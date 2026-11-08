@@ -12,7 +12,7 @@ The brain is organised **per project**:
 - `~/brain/Projects/<Name>/` holds everything about one repo: the hub note `<Name>.md` plus type folders (`Decisions/`, `Gotchas/`, `Patterns/`, `Preferences/`, `References/`).
 - `~/brain/Global/` holds knowledge that applies across projects, in the same type folders.
 
-graphify turns the notes and their `[[wikilinks]]` into graphs under `~/.graphify/brain/`: one per project, plus one for the whole vault. That's how you find what's relevant without reading everything.
+`brain query` ranks whole notes (title and body) by how well they match your words, so you find what's relevant without reading everything. graphify turns the notes and their `[[wikilinks]]` into graphs under `~/.graphify/brain/`, and the query uses them to also list the notes linked to the best matches.
 
 It replaces the built-in auto memory. Do not write to `~/.claude/projects/*/memory/`; anything worth remembering goes here.
 
@@ -21,16 +21,16 @@ The notes are the source of truth and the graph is only an index. Always open th
 All commands go through the `brain` command on PATH (installed by the `agent-brain` tool; `brain doctor` checks the setup):
 
 ```bash
-brain query "<question>" [budget]             # current project's graph (whole vault if the folder has no project)
-brain query "<question>" --all                # whole vault: cross-project questions, or nothing found in the project
-brain query "<question>" --project "<Name>"   # another project's graph
+brain query "<question>" [budget]             # this project + Global/ (whole vault if the folder has no project)
+brain query "<question>" --all                # whole vault: cross-project questions, or nothing relevant found
+brain query "<question>" --project "<Name>"   # another project + Global/
 brain find <word> [word...]                   # notes anywhere containing all the words (dedupe before writing)
 brain project [dir]                           # project hub for a folder (default: cwd; exit 1 if none)
 brain init-project "<Name>" <repo-dir>...     # create Projects/<Name>/ with a hub mapped to those folders
 brain rebuild                                 # rebuild all graphs (structural, no LLM, <1s)
 ```
 
-The query prints which scope it searched and what the `src=` paths are relative to.
+The query prints which scope it searched, then up to 5 notes, best match first, each with the words it matched and its first line, then the notes linked to them. Paths are relative to `~/brain/`.
 
 Note format, folders and naming rules live in `~/brain/_meta/Conventions.md`. Read it before your first write in a session; the user may have changed it.
 
@@ -38,9 +38,9 @@ Note format, folders and naming rules live in `~/brain/_meta/Conventions.md`. Re
 
 At session start a hook has already put three things into context: the current project's hub note, that project's preferences, and the global preferences. That is the minimum. Before non-trivial work, go one step further:
 
-1. Run `brain query "<what the task is about>"` from the repo folder. It searches only this project's area. Use the words a note would use (component names, error text, tool names), not the user's whole message.
-2. The output lists nodes with `src=<path>`. Open the few notes that look relevant, resolving paths against the folder named in the scope line. Skip the rest.
-3. Widen only when you need to. Use `--all` when the project's area has nothing relevant, or when the question is about another project or crosses projects ("how did we handle webhooks elsewhere?"). Then try `brain find <keyword>` before concluding there's nothing.
+1. Run `brain query "<what the task is about>"` from the repo folder. It searches this project's area plus `Global/`, matching note titles and bodies. Use the words a note would use (component names, error text, tool names), not the user's whole message.
+2. Open the few listed notes that look relevant (paths are under `~/brain/`). A result that matched only one common word is probably unrelated. Skip the rest.
+3. Widen only when you need to. Use `--all` when nothing relevant comes back, or when the question is about another project or crosses projects ("how did we handle webhooks elsewhere?"). Then try `brain find <keyword>` before concluding there's nothing.
 4. Use what you found quietly. Mention a note only when it changes what you do ("the brain says tests here run through `make test`, so...").
 
 Don't re-run recall on every turn of a task you've already recalled for. Do run it again when the task shifts to a different area.

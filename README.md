@@ -105,7 +105,7 @@ Setup only updates or removes skills it installed. It records them in `.agent-br
   Projects/<Name>/<Type>/         everything about that project
 ```
 
-Graphs live outside the vault, in `~/.graphify/brain/all/` and `~/.graphify/brain/projects/<slug>/`, and are rebuilt automatically when notes change. Inside a repo, recall searches that project's graph; `--all` widens it to the whole vault.
+Graphs live outside the vault, in `~/.graphify/brain/all/` and `~/.graphify/brain/projects/<slug>/`, and are rebuilt automatically when notes change. Inside a repo, `brain query` ranks that project's notes and `Global/` by their full text (title and body), then lists the notes linked to the best matches; `--all` widens it to the whole vault.
 
 ## Updating
 

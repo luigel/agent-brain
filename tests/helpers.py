@@ -32,13 +32,13 @@ class BrainTestCase(unittest.TestCase):
         return subprocess.run(["git", *args], cwd=cwd, env=self.env(), check=True,
                               capture_output=True, text=True).stdout
 
-    def run_brain(self, *args, env=None, input=None):
+    def run_brain(self, *args, env=None, input=None, cwd=None):
         stdin = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
         return subprocess.run([sys.executable, "-m", "agent_brain", *args], env=env or self.env(),
-                              capture_output=True, text=True, timeout=120, **stdin)
+                              capture_output=True, text=True, timeout=120, cwd=cwd, **stdin)
 
-    def brain(self, *args):
-        r = self.run_brain(*args)
+    def brain(self, *args, cwd=None):
+        r = self.run_brain(*args, cwd=cwd)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return r.stdout
 
