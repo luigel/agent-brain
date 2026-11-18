@@ -92,6 +92,12 @@ When asked to tidy the brain (or when you notice duplicates while recording):
 
 Rebuild when done.
 
+## Project skills
+
+Use `brain skill import DIR --project NAME` to save a complete skill folder under `Projects/<Name>/Skills/` in the vault. `NAME` is the existing hub name. Add `--include-sibling FILE` for each shared file beside the source folder. The archive syncs with the vault and stays out of recall and graphs.
+
+After setting up the vault on another machine, run `brain skills restore --project NAME --directory CHECKOUT`. Restore copies the skills into `.agents/skills/` and `.claude/skills/` in the checkout and adds local Git exclusions when applicable. Omit `--directory` to use the current directory. Restore leaves a differing local copy in place and reports the conflict.
+
 ## Explicit commands
 
 - `/brain` or "what do you know about X" → recall and summarise what the notes say, with links.

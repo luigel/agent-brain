@@ -497,7 +497,19 @@ def claude_profiles():
     return list(dirs.values())
 
 
-def skills_cmd(_args):
+def skills_cmd(args):
+    if args[:1] == ["restore"]:
+        p = argparse.ArgumentParser(prog="brain skills restore")
+        p.add_argument("--project", required=True, help="name of the vault project")
+        p.add_argument("--directory", default=".", help="checkout directory (default: current directory)")
+        a = p.parse_args(args[1:])
+        from . import project_skills
+
+        try:
+            project_skills.restore(a.project, a.directory)
+        except (OSError, RuntimeError, ValueError) as exc:
+            p.error(str(exc))
+        return 0
     labels = {"current": "✓ installed", "outdated": "↻ outdated (brain setup)", "missing": "· not installed",
               "conflict": "! someone else's copy (brain setup --adopt NAME)", "synced": "= synced by claude.ai"}
     last = None
@@ -515,7 +527,22 @@ def skill_import(args):
     p.add_argument("dir", help="an existing skill folder (with SKILL.md)")
     p.add_argument("--name", help="skill name in your kit (default: the folder name)")
     p.add_argument("--force", action="store_true", help="overwrite a kit skill with the same name")
+    p.add_argument("--project", help="archive in an existing vault project")
+    p.add_argument("--include-sibling", action="append", default=[], metavar="FILE",
+                   help="also archive a regular file beside the skill folder (repeatable; requires --project)")
     a = p.parse_args(args)
+    if a.project is not None:
+        if a.force:
+            p.error("--force is not supported with --project")
+        from . import project_skills
+
+        try:
+            project_skills.import_skill(a.dir, a.project, a.name, a.include_sibling)
+        except (OSError, RuntimeError, ValueError) as exc:
+            p.error(str(exc))
+        return 0
+    if a.include_sibling:
+        p.error("--include-sibling requires --project")
     src = Path(os.path.expanduser(a.dir)).resolve()
     if not (src / "SKILL.md").is_file():
         p.error(f"{src} has no SKILL.md")

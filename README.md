@@ -93,6 +93,33 @@ Setup only updates or removes skills it installed. It records them in `.agent-br
 
 `brain skills` shows the status of every skill everywhere.
 
+## Project skills
+
+Archive a complete skill folder under an existing project's `Skills/` directory in the vault. Use the project hub name, even if the checkout has a different name on another machine.
+
+```bash
+brain skill import ./path/to/my-skill --project "My Project"
+brain skill import ./path/to/another-skill --project "My Project" --include-sibling ./path/to/shared.md
+```
+
+Use `--name` to change the folder name in the archive. You can import through a symlink to the source folder. The folder contents must use regular files and directories. Use `--include-sibling FILE` once per shared file. The archive contains the skill instructions and bundled files, including executable scripts. It syncs with the vault and stays out of recall and graphs.
+
+On another machine, install the current version of agent-brain from GitHub.
+
+```bash
+uv tool install --force git+https://github.com/luigel/agent-brain.git@main
+```
+
+Set up Brain with your vault, then restore the archive into an existing checkout.
+
+```bash
+brain skills restore --project "My Project" --directory /path/to/checkout
+```
+
+Leave out `--directory` to use the current directory. Restore copies the archive into `.agents/skills/` and `.claude/skills/` under that directory. An existing `.claude/skills` symlink to the checkout's `.agents/skills` already shares the Codex copy. In a Git checkout, restore adds entries for the copied paths to the local `info/exclude`. If the checkout's Git ignore rules would expose the restored paths, restore stops before copying. A workspace root without its own repository works too.
+
+Identical reruns reuse the existing files. Import and restore report conflicts before copying. If a destination already has a different version, choose which version to keep before retrying. Install any external tools, configuration, or separately versioned files the skill uses on the new machine.
+
 ## How the brain is organised
 
 ```
@@ -102,7 +129,8 @@ Setup only updates or removes skills it installed. It records them in `.agent-br
   _meta/skills/                   your own skills (not notes)
   Global/<Type>/                  knowledge true in any repo
   Projects/<Name>/<Name>.md       project hub; `paths:` lists the repo folder(s)
-  Projects/<Name>/<Type>/         everything about that project
+  Projects/<Name>/<Type>/         knowledge about that project
+  Projects/<Name>/Skills/         archived project skills and assets
 ```
 
 Graphs live outside the vault, in `~/.graphify/brain/all/` and `~/.graphify/brain/projects/<slug>/`, and are rebuilt automatically when notes change. Inside a repo, `brain query` ranks that project's notes and `Global/` by their full text (title and body), and names the best match in the rest of the vault when it lies outside the project; `--all` widens it to the whole vault.
@@ -129,8 +157,10 @@ brain rebuild                                            rebuild all graphs
 brain sync                                               commit, pull and push the vault now
 brain context [dir] [--json]                             SessionStart hook output
 brain stop-check                                         Stop hook: one end-of-session "record learnings" nudge
-brain skills                                             where each skill is installed
-brain skill import <dir>                                 add a skill folder to your kit
+brain skills                                             where each global skill is installed
+brain skill import <dir>                                 add a skill folder to your global kit
+brain skill import <dir> --project NAME                  archive the skill for an existing project
+brain skills restore --project NAME [--directory DIR]   copy archived skills to a checkout
 brain setup / doctor / version
 ```
 

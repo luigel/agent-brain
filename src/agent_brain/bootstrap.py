@@ -14,7 +14,7 @@ from . import core
 LINK = Path.home() / "brain"
 DEFAULT_VAULT = Path.home() / "Documents" / "Agent Brain"
 STARTER_MESSAGE = "Start the vault from the agent-brain starter"
-IGNORE_LINES = ("_meta/skills/", "_meta/third-party.json")  # the kit is not notes; keep it out of recall
+IGNORE_LINES = ("_meta/skills/", "_meta/third-party.json", core.VAULT_SKILLS_IGNORE)
 STAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 BACKUPS = Path.home() / ".cache" / "agent-brain" / "backups" / STAMP
 

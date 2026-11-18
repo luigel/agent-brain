@@ -22,8 +22,11 @@
                                               link, skills, hooks and instructions
   brain doctor                                check the vault, graphify, graphs, skills and agent wiring
   brain skills                                status of agent-brain's and your kit's skills everywhere
-  brain skill import <dir> [--name N]         add a skill folder to your kit (<vault>/_meta/skills) and
-                                              install it on this machine
+  brain skill import <dir> [--name NAME]      add a skill folder to your global kit and install it
+  brain skill import <dir> --project NAME [--name NAME] [--include-sibling FILE ...]
+                                              archive a full skill folder in Projects/<Name>/Skills/
+  brain skills restore --project NAME [--directory DIR]
+                                              restore project skills inside DIR (default: current directory)
   brain version
 """
 import datetime
@@ -47,6 +50,8 @@ BANNED_NAME = re.compile(r"secret|password|passwd|token|credential|service.?acco
 # Each dev's own kit lives in the vault and syncs with it; it isn't notes, so recall skips it.
 KIT_SKILLS = Path("_meta") / "skills"
 KIT_MANIFEST = Path("_meta") / "third-party.json"
+PROJECT_SKILLS = "Skills"
+VAULT_SKILLS_IGNORE = f"Projects/*/{PROJECT_SKILLS}/"
 
 
 def root():
@@ -70,6 +75,8 @@ def notes(base=None):
     for p in base.rglob("*.md"):
         rel = p.relative_to(root())
         if any(part.startswith(".") for part in rel.parts) or rel.parts[:2] == KIT_SKILLS.parts:
+            continue
+        if rel.parts[:1] == ("Projects",) and rel.parts[2:3] == (PROJECT_SKILLS,):
             continue
         yield p, rel
 
@@ -156,11 +163,15 @@ def scopes():
 def newest_mtime(base):
     # directory mtimes catch deletions and renames, not just edits
     newest = base.stat().st_mtime
+    projects_root = root() / "Projects"
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        folder = Path(dirpath)
+        if folder.parent == projects_root and PROJECT_SKILLS in dirnames:
+            dirnames.remove(PROJECT_SKILLS)
         newest = max(newest, os.stat(dirpath).st_mtime)
         for f in filenames:
-            if f.endswith(".md"):
+            if f.endswith(".md") or f == ".graphifyignore":
                 newest = max(newest, os.stat(os.path.join(dirpath, f)).st_mtime)
     return newest
 
@@ -179,9 +190,33 @@ def build(src, out):
     return True, line.replace("[graphify watch] Rebuilt: ", "")
 
 
+def ensure_project_skill_exclusion(src):
+    ignore = src / ".graphifyignore"
+    if src.resolve() != src or ignore.is_symlink() or (ignore.exists() and not ignore.is_file()):
+        raise ValueError(f"expected a regular graph ignore file at {ignore}")
+    rule = VAULT_SKILLS_IGNORE if src == root() else f"{PROJECT_SKILLS}/"
+    text = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    patterns = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    for pattern in reversed(patterns):
+        if pattern == rule:
+            return
+        if pattern.lstrip().startswith("!"):
+            break
+    separator = "\n" if text and not text.endswith("\n") else ""
+    with ignore.open("a", encoding="utf-8") as file:
+        file.write(f"{separator}{rule}\n")
+
 def rebuild(if_stale=False):
     ok = True
     for name, src, out in scopes():
+        has_archive = any(src.glob(f"Projects/*/{PROJECT_SKILLS}")) if src == root() else (src / PROJECT_SKILLS).exists()
+        if has_archive:
+            try:
+                ensure_project_skill_exclusion(src)
+            except (OSError, ValueError) as exc:
+                print(f"brain: rebuild of {name} failed: {exc}", file=sys.stderr)
+                ok = False
+                continue
         graph = out / "graph.json"
         if if_stale and graph.exists() and graph.stat().st_mtime >= newest_mtime(src):
             continue
@@ -381,11 +416,12 @@ def init_project(name, dirs):
 SYNC_LOG = Path.home() / ".cache" / "agent-brain" / "sync.log"
 
 
-def git(*args, timeout=20, cwd=None):
+def git(*args, timeout=20, cwd=None, input=None):
     """Run git in the vault (or `cwd`); None if git couldn't run or timed out."""
+    stdin = {"stdin": subprocess.DEVNULL} if input is None else {"input": input}
     try:
         return subprocess.run(["git", "-C", str(cwd or root()), *args], capture_output=True, text=True,
-                              timeout=timeout, stdin=subprocess.DEVNULL)
+                              timeout=timeout, **stdin)
     except (OSError, subprocess.TimeoutExpired):
         return None
 
